@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+import json
 import os
 import subprocess
 import logging
@@ -10,9 +11,10 @@ def procesar_archivos(rutas: list[str]):
         if info.fps is None:
             logging.error(f"No se pudo obtener FPS de: {ruta}")
             continue
-        logging.info(f"FPS obtenidos para '{ruta}': {info.fps:.2f}")
+        logging.info(f"Información extraída para '{ruta}': {info}")
         
-        comando = generar_comando_ffmpeg(ruta, info)
+        # comando = generar_comando_ffmpeg(ruta, info)
+        comando = None
         if comando:
             ejecutar_ffmpeg(comando)
         else:
@@ -22,22 +24,21 @@ def procesar_archivos(rutas: list[str]):
 class VideoInfo:
     fps: float | None
     audio_bitrate: int | None
+    video_bitrate: int | None
 
 def obtener_info_video(ruta: str) -> VideoInfo:
-    """
-    Retorna los FPS y el bitrate de audio del archivo especificado.
-    Busca el primer stream de tipo 'video' y 'audio' respectivamente.
-    """
     fps = None
     audio_bitrate = None
+    video_bitrate = None
     tipo_actual = None
 
     try:
         resultado = subprocess.run(
             [
                 "ffprobe", "-v", "error",
+                "-show_entries", "format=bit_rate", 
                 "-show_entries", "stream=index,codec_type,r_frame_rate,bit_rate",
-                "-of", "default=noprint_wrappers=1",
+                "-of", "json",
                 ruta
             ],
             stdout=subprocess.PIPE,
@@ -45,29 +46,29 @@ def obtener_info_video(ruta: str) -> VideoInfo:
             text=True
         )
 
-        for linea in resultado.stdout.splitlines():
-            if linea.startswith("codec_type="):
-                tipo_actual = linea.split("=")[1].strip()
+        data = json.loads(resultado.stdout)
+        
+        # Bitrate promedio total del archivo
+        if "format" in data and "bit_rate" in data["format"]:
+            video_bitrate = int(data["format"]["bit_rate"])
 
-            elif tipo_actual == "video" and fps is None and linea.startswith("r_frame_rate="):
-                valor = linea.split("=")[1]
-                if "/" in valor:
-                    num, denom = map(int, valor.split("/"))
+
+        for stream in data.get("streams", []):
+            if stream.get("codec_type") == "video" and fps is None:
+                r_frame_rate = stream.get("r_frame_rate")
+                if r_frame_rate and "/" in r_frame_rate:
+                    num, denom = map(int, r_frame_rate.split("/"))
                     fps = num / denom if denom != 0 else None
 
-            elif tipo_actual == "audio" and audio_bitrate is None and linea.startswith("bit_rate="):
-                valor = linea.split("=")[1]
-                if valor.isdigit():
-                    audio_bitrate = int(valor)
-
-            # Cortar si ya se obtuvieron ambos
-            if fps is not None and audio_bitrate is not None:
-                break
+            elif stream.get("codec_type") == "audio" and audio_bitrate is None:
+                bitrate = stream.get("bit_rate")
+                if bitrate:
+                    audio_bitrate = int(bitrate)
 
     except Exception as e:
         logging.error(f"Error al obtener información del video '{ruta}': {e}")
 
-    return VideoInfo(fps=fps, audio_bitrate=audio_bitrate)
+    return VideoInfo(fps=fps, audio_bitrate=audio_bitrate, video_bitrate=video_bitrate)
 
 def generar_comando_ffmpeg(path: str, info: VideoInfo) -> list[str] | None:
     """
