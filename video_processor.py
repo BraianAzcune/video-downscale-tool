@@ -46,17 +46,18 @@ def obtener_fps(ruta: str) -> float | None:
 def generar_comando_ffmpeg(path: str, fps: float) -> list[str] | None:
     """
     Genera el comando ffmpeg para convertir el video a 480p usando el encoder h264_nvenc.
-    
+
     - Si los FPS del video original son mayores a 40, se fuerza la reducción a 30 FPS.
     - Si son 40 o menos, se mantiene la tasa original y no se aplica el filtro fps.
+    - El audio siempre se recodifica a AAC a 160 kbps.
     - Si el archivo de salida ya existe, se agrega un sufijo único con un GUID para evitar sobrescritura.
-    
+
     El archivo de salida queda en la misma carpeta que el original, con sufijo '_converted[_guid].ext'.
-    
+
     Parámetros:
         path (str): Ruta absoluta al archivo de video original.
         fps (float): FPS promedio detectado del video original.
-    
+
     Retorna:
         list[str] | None: Lista de argumentos para ffmpeg o None si ocurre algún error.
     """
@@ -87,7 +88,8 @@ def generar_comando_ffmpeg(path: str, fps: float) -> list[str] | None:
             "-c:v", "h264_nvenc",
             "-preset", "p3",
             "-cq", "23",
-            "-c:a", "copy",
+            "-c:a", "aac",
+            "-b:a", "160k",
             path_salida
         ]
     except Exception as e:
