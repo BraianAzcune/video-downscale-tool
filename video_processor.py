@@ -95,5 +95,21 @@ def generar_comando_ffmpeg(path: str, fps: float) -> list[str] | None:
         return None
 
 def ejecutar_ffmpeg(comando: list[str]):
-    # Ejecuta el comando ffmpeg con subprocess y loguea resultado
-    pass
+    try:
+        logging.info(f"Ejecutando FFmpeg: {' '.join(comando)}")
+        
+        resultado = subprocess.run(
+            comando,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True
+        )
+
+        if resultado.returncode == 0:
+            logging.info("Conversión completada con éxito.")
+        else:
+            logging.error(f"Error en la conversión. Código: {resultado.returncode}")
+            logging.error(resultado.stderr.strip())
+    
+    except Exception as e:
+        logging.error(f"Error al ejecutar FFmpeg: {e}")
