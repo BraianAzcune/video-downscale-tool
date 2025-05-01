@@ -17,16 +17,20 @@ def main():
     if not rutas:
         logging.info("El archivo está vacío. Finalizando.")
         return
-
-    if not validar_rutas(rutas):
-        logging.info("No se encontraron rutas válidas en el archivo. Finalizando.")
+    
+    rutas = filter_valid_paths(rutas)
+    if len(rutas) == 0:
+        logging.info("No se encontraron rutas válidas. Finalizando.")
         return
 
     procesar_archivos(rutas)
 
 def configurar_logging():
     fecha_log = datetime.now().strftime("%Y%m%d-%H%M%S")
-    log_file = f"log-{fecha_log}.log"
+    carpeta_logs = "Logs"
+    os.makedirs(carpeta_logs, exist_ok=True)
+
+    log_file = os.path.join(carpeta_logs, f"{fecha_log}.log")
 
     logging.basicConfig(
         filename=log_file,
@@ -66,9 +70,17 @@ def leer_rutas_desde_archivo(path: str) -> list[str]:
         return []
 
 
-def validar_rutas(rutas: list[str]) -> bool:
-    # Valida que las rutas tengan formato correcto y existan en el sistema
-    pass
+def filter_valid_paths(rutas: list[str]) -> list[str]:
+    rutas_validas = []
+
+    for ruta in rutas:
+        if os.path.isfile(ruta):
+            rutas_validas.append(ruta)
+        else:
+            logging.warning(f"Ruta inválida o archivo no encontrado: {ruta}")
+
+    logging.info(f"Se encontraron {len(rutas_validas)} / {len(rutas)} rutas válidas")
+    return rutas_validas
 
 def procesar_archivos(rutas: list[str]):
     # Lógica principal: por cada ruta, determinar FPS, decidir si se aplica filtro, y ejecutar ffmpeg
