@@ -13,8 +13,7 @@ def procesar_archivos(rutas: list[str]):
             continue
         logging.info(f"Información extraída para '{ruta}': {info}")
         
-        # comando = generar_comando_ffmpeg(ruta, info)
-        comando = None
+        comando = generar_comando_ffmpeg(ruta, info)
         if comando:
             ejecutar_ffmpeg(comando)
         else:
@@ -42,7 +41,8 @@ def obtener_info_video(ruta: str) -> VideoInfo:
             ],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            text=True
+            text=True,
+            encoding="utf-8"
         )
 
         data = json.loads(resultado.stdout)
@@ -117,6 +117,10 @@ def generar_comando_ffmpeg(path: str, info: VideoInfo) -> list[str] | None:
             audio_args = ["-c:a", "copy"]
 
 
+        # ④ Calcular límites de VBR (maxrate, bufsize) basados en info
+        maxrate, bufsize = calcular_limites_de_bitrate(info)
+        vbr_args = ["-maxrate", f"{maxrate}k", "-bufsize", f"{bufsize}k"]
+
         return [
             "ffmpeg",
             "-i", path,
@@ -124,6 +128,7 @@ def generar_comando_ffmpeg(path: str, info: VideoInfo) -> list[str] | None:
             "-c:v", "h264_nvenc",
             "-preset", "p3",
             "-cq", "23",
+            *vbr_args,
             *audio_args,
             path_salida
         ]
@@ -131,6 +136,50 @@ def generar_comando_ffmpeg(path: str, info: VideoInfo) -> list[str] | None:
     except Exception as e:
         logging.error(f"Error al generar comando ffmpeg para '{path}': {e}")
         return None
+
+def calcular_limites_de_bitrate(info: VideoInfo) -> tuple[int, int]:
+    """
+    Calcula maxrate y bufsize en kbps en base a:
+      - El bitrate original promedio del video (con un margen del 20%)
+      - Una estimación basada en la resolución (2 Mbps por megapíxel)
+    Luego selecciona el menor valor como protección contra sobrecodificación.
+    """
+    limite_por_resolucion = None
+    limite_por_bitrate = None
+
+    if info.width and info.height:
+        megapixeles = (info.width * info.height) / 1_000_000
+        limite_por_resolucion = int(megapixeles * 2000)
+        logging.info(f"[Resolución] {info.width}x{info.height} → {megapixeles:.2f} MPx → límite sugerido: {limite_por_resolucion} kbps")
+    else:
+        logging.warning("No se pudo determinar la resolución. Se omite el límite por resolución.")
+
+    if info.video_bitrate:
+        original_kbps = info.video_bitrate // 1000
+        limite_por_bitrate = int(original_kbps * 1.2)
+        logging.info(f"[Bitrate original] {original_kbps} kbps → límite aumentado (20%): {limite_por_bitrate} kbps")
+    else:
+        logging.warning("No se pudo determinar el bitrate original. Se omite el límite por bitrate.")
+
+    if limite_por_bitrate is not None and limite_por_resolucion is not None:
+        maxrate = min(limite_por_bitrate, limite_por_resolucion)
+        logging.info(f"[Límite final] Usando el menor entre bitrate y resolución: {maxrate} kbps")
+    elif limite_por_resolucion is not None:
+        maxrate = limite_por_resolucion
+        logging.info(f"[Límite final] Solo se pudo usar la resolución: {maxrate} kbps")
+    elif limite_por_bitrate is not None:
+        maxrate = limite_por_bitrate
+        logging.info(f"[Límite final] Solo se pudo usar el bitrate original: {maxrate} kbps")
+    else:
+        maxrate = 2000
+        logging.warning(f"[Límite final] No se pudo calcular ningún límite. Usando valor por defecto: {maxrate} kbps")
+
+    bufsize = maxrate * 2
+    logging.info(f"[Buffer] Bufsize calculado como 2x maxrate: {bufsize} kbps")
+
+    return maxrate, bufsize
+
+
 
 def ejecutar_ffmpeg(comando: list[str]):
     try:
@@ -140,7 +189,8 @@ def ejecutar_ffmpeg(comando: list[str]):
             comando,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            text=True
+            text=True,
+            encoding="utf-8"
         )
 
         if resultado.returncode == 0:
