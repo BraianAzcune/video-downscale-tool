@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 import os
 import subprocess
 import logging
@@ -5,26 +6,38 @@ import uuid
 
 def procesar_archivos(rutas: list[str]):
     for ruta in rutas:
-        fps = obtener_fps(ruta)
-        if fps is None:
+        info = obtener_info_video(ruta)
+        if info.fps is None:
             logging.error(f"No se pudo obtener FPS de: {ruta}")
             continue
-        logging.info(f"FPS obtenidos para '{ruta}': {fps:.2f}")
+        logging.info(f"FPS obtenidos para '{ruta}': {info.fps:.2f}")
         
-        comando = generar_comando_ffmpeg(ruta, fps)
+        comando = generar_comando_ffmpeg(ruta, info)
         if comando:
             ejecutar_ffmpeg(comando)
         else:
             logging.warning(f"Comando no generado para: {ruta}")
 
-def obtener_fps(ruta: str) -> float | None:
+@dataclass
+class VideoInfo:
+    fps: float | None
+    audio_bitrate: int | None
+
+def obtener_info_video(ruta: str) -> VideoInfo:
+    """
+    Retorna los FPS y el bitrate de audio del archivo especificado.
+    Busca el primer stream de tipo 'video' y 'audio' respectivamente.
+    """
+    fps = None
+    audio_bitrate = None
+    tipo_actual = None
+
     try:
         resultado = subprocess.run(
             [
                 "ffprobe", "-v", "error",
-                "-select_streams", "v:0",
-                "-show_entries", "stream=r_frame_rate",
-                "-of", "default=noprint_wrappers=1:nokey=1",
+                "-show_entries", "stream=index,codec_type,r_frame_rate,bit_rate",
+                "-of", "default=noprint_wrappers=1",
                 ruta
             ],
             stdout=subprocess.PIPE,
@@ -32,31 +45,44 @@ def obtener_fps(ruta: str) -> float | None:
             text=True
         )
 
-        fps_str = resultado.stdout.strip()  # Ej: "60/1" o "30000/1001"
-        if "/" in fps_str:
-            num, denom = map(int, fps_str.split("/"))
-            return num / denom if denom != 0 else None
-        return float(fps_str)
+        for linea in resultado.stdout.splitlines():
+            if linea.startswith("codec_type="):
+                tipo_actual = linea.split("=")[1].strip()
+
+            elif tipo_actual == "video" and fps is None and linea.startswith("r_frame_rate="):
+                valor = linea.split("=")[1]
+                if "/" in valor:
+                    num, denom = map(int, valor.split("/"))
+                    fps = num / denom if denom != 0 else None
+
+            elif tipo_actual == "audio" and audio_bitrate is None and linea.startswith("bit_rate="):
+                valor = linea.split("=")[1]
+                if valor.isdigit():
+                    audio_bitrate = int(valor)
+
+            # Cortar si ya se obtuvieron ambos
+            if fps is not None and audio_bitrate is not None:
+                break
 
     except Exception as e:
-        logging.error(f"Error al obtener FPS de '{ruta}': {e}")
-        return None
+        logging.error(f"Error al obtener información del video '{ruta}': {e}")
 
+    return VideoInfo(fps=fps, audio_bitrate=audio_bitrate)
 
-def generar_comando_ffmpeg(path: str, fps: float) -> list[str] | None:
+def generar_comando_ffmpeg(path: str, info: VideoInfo) -> list[str] | None:
     """
     Genera el comando ffmpeg para convertir el video a 480p usando el encoder h264_nvenc.
 
     - Si los FPS del video original son mayores a 40, se fuerza la reducción a 30 FPS.
     - Si son 40 o menos, se mantiene la tasa original y no se aplica el filtro fps.
-    - El audio siempre se recodifica a AAC a 160 kbps.
+    - El audio se recodifica a AAC 160 kbps solo si su bitrate original es mayor a 192 kbps.
     - Si el archivo de salida ya existe, se agrega un sufijo único con un GUID para evitar sobrescritura.
 
     El archivo de salida queda en la misma carpeta que el original, con sufijo '_converted[_guid].ext'.
 
     Parámetros:
         path (str): Ruta absoluta al archivo de video original.
-        fps (float): FPS promedio detectado del video original.
+        info (VideoInfo): Contiene FPS y bitrate de audio detectados.
 
     Retorna:
         list[str] | None: Lista de argumentos para ffmpeg o None si ocurre algún error.
@@ -76,10 +102,21 @@ def generar_comando_ffmpeg(path: str, fps: float) -> list[str] | None:
 
         # Armado del filtro de video
         filtros = ["hwupload_cuda", "scale_cuda=w=-2:h=480"]
-        if fps > 40:
+        if info.fps and info.fps > 40:
             filtros.append("fps=30")
-
         filtro_vf = ",".join(filtros)
+
+        # Condición para codificación de audio
+        if info.audio_bitrate is None:
+            logging.info("Bitrate de audio no detectado; se asumirá 'copy'.")
+            audio_args = ["-c:a", "copy"]
+        elif info.audio_bitrate > 192000:
+            logging.info(f"Bitrate de audio alto ({info.audio_bitrate}); se recodificará a 160k.")
+            audio_args = ["-c:a", "aac", "-b:a", "160k"]
+        else:
+            logging.info(f"Bitrate de audio aceptable ({info.audio_bitrate}); se conservará el original.")
+            audio_args = ["-c:a", "copy"]
+
 
         return [
             "ffmpeg",
@@ -88,10 +125,10 @@ def generar_comando_ffmpeg(path: str, fps: float) -> list[str] | None:
             "-c:v", "h264_nvenc",
             "-preset", "p3",
             "-cq", "23",
-            "-c:a", "aac",
-            "-b:a", "160k",
+            *audio_args,
             path_salida
         ]
+
     except Exception as e:
         logging.error(f"Error al generar comando ffmpeg para '{path}': {e}")
         return None
