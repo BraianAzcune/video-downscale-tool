@@ -22,22 +22,21 @@ def procesar_archivos(rutas: list[str]):
 
 @dataclass
 class VideoInfo:
-    fps: float | None
-    audio_bitrate: int | None
-    video_bitrate: int | None
+    fps: float | None = None
+    audio_bitrate: int | None = None
+    video_bitrate: int | None = None
+    width: int | None = None
+    height: int | None = None
 
 def obtener_info_video(ruta: str) -> VideoInfo:
-    fps = None
-    audio_bitrate = None
-    video_bitrate = None
-    tipo_actual = None
+    info = VideoInfo()
 
     try:
         resultado = subprocess.run(
             [
                 "ffprobe", "-v", "error",
                 "-show_entries", "format=bit_rate", 
-                "-show_entries", "stream=index,codec_type,r_frame_rate,bit_rate",
+                "-show_entries", "stream=index,codec_type,r_frame_rate,bit_rate,width,height",
                 "-of", "json",
                 ruta
             ],
@@ -49,26 +48,29 @@ def obtener_info_video(ruta: str) -> VideoInfo:
         data = json.loads(resultado.stdout)
         
         # Bitrate promedio total del archivo
-        if "format" in data and "bit_rate" in data["format"]:
-            video_bitrate = int(data["format"]["bit_rate"])
+        info.video_bitrate = int(data["format"]["bit_rate"])
 
+        streams = data["streams"]
+        video_stream = next(s for s in streams if s["codec_type"] == "video")
+        audio_stream = next(s for s in streams if s["codec_type"] == "audio")
 
-        for stream in data.get("streams", []):
-            if stream.get("codec_type") == "video" and fps is None:
-                r_frame_rate = stream.get("r_frame_rate")
-                if r_frame_rate and "/" in r_frame_rate:
-                    num, denom = map(int, r_frame_rate.split("/"))
-                    fps = num / denom if denom != 0 else None
+        # FPS
+        r_frame_rate = video_stream["r_frame_rate"]
+        num, denom = map(int, r_frame_rate.split("/"))
+        info.fps = num / denom if denom != 0 else None
 
-            elif stream.get("codec_type") == "audio" and audio_bitrate is None:
-                bitrate = stream.get("bit_rate")
-                if bitrate:
-                    audio_bitrate = int(bitrate)
+        # Resolución
+        info.width = video_stream["width"]
+        info.height = video_stream["height"]
+
+        # Bitrate de audio
+        info.audio_bitrate = int(audio_stream["bit_rate"]) if "bit_rate" in audio_stream else 0
+
 
     except Exception as e:
         logging.error(f"Error al obtener información del video '{ruta}': {e}")
 
-    return VideoInfo(fps=fps, audio_bitrate=audio_bitrate, video_bitrate=video_bitrate)
+    return info
 
 def generar_comando_ffmpeg(path: str, info: VideoInfo) -> list[str] | None:
     """
@@ -107,11 +109,7 @@ def generar_comando_ffmpeg(path: str, info: VideoInfo) -> list[str] | None:
             filtros.append("fps=30")
         filtro_vf = ",".join(filtros)
 
-        # Condición para codificación de audio
-        if info.audio_bitrate is None:
-            logging.info("Bitrate de audio no detectado; se asumirá 'copy'.")
-            audio_args = ["-c:a", "copy"]
-        elif info.audio_bitrate > 192000:
+        if info.audio_bitrate > 192000:
             logging.info(f"Bitrate de audio alto ({info.audio_bitrate}); se recodificará a 160k.")
             audio_args = ["-c:a", "aac", "-b:a", "160k"]
         else:
