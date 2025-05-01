@@ -1,7 +1,7 @@
 import os
-import sys
 import logging
 from datetime import datetime
+from video_processor import procesar_archivos
 
 def main():
     configurar_logging()
@@ -17,8 +17,11 @@ def main():
     if not rutas:
         logging.info("El archivo está vacío. Finalizando.")
         return
-    
+
+    rutas = remove_duplicate_paths(rutas)
     rutas = filter_valid_paths(rutas)
+    rutas = filter_supported_extensions(rutas)
+
     if len(rutas) == 0:
         logging.info("No se encontraron rutas válidas. Finalizando.")
         return
@@ -82,9 +85,27 @@ def filter_valid_paths(rutas: list[str]) -> list[str]:
     logging.info(f"Se encontraron {len(rutas_validas)} / {len(rutas)} rutas válidas")
     return rutas_validas
 
-def procesar_archivos(rutas: list[str]):
-    # Lógica principal: por cada ruta, determinar FPS, decidir si se aplica filtro, y ejecutar ffmpeg
-    pass
+def filter_supported_extensions(rutas: list[str]) -> list[str]:
+    extensiones_validas = {'.wmv', '.webm', '.mp4', '.mkv'}
+    rutas_filtradas = []
+
+    for ruta in rutas:
+        ext = os.path.splitext(ruta)[1].lower()
+        if ext in extensiones_validas:
+            rutas_filtradas.append(ruta)
+        else:
+            logging.warning(f"Extensión no soportada: {ruta}")
+
+    logging.info(f"{len(rutas_filtradas)} archivos tienen extensiones válidas.")
+    return rutas_filtradas
+
+
+def remove_duplicate_paths(rutas: list[str]) -> list[str]:
+    rutas_unicas = list(dict.fromkeys(rutas))
+    if len(rutas_unicas) < len(rutas):
+        logging.info(f"Se eliminaron {len(rutas) - len(rutas_unicas)} rutas duplicadas.")
+    return rutas_unicas
+
 
 def guardar_fallo(path_archivo: str, mensaje: str):
     # Guarda errores específicos en un archivo de errores, si quisieras uno aparte

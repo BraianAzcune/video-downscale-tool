@@ -1,2 +1,6 @@
 *.log
 archivos_a_transformar.txt
+
+
+__pycache__/
+*.py[cod]
