@@ -26,7 +26,7 @@ def main():
 
 def configurar_logging():
     fecha_log = datetime.now().strftime("%Y%m%d-%H%M%S")
-    log_file = f"log-{fecha_log}.txt"
+    log_file = f"log-{fecha_log}.log"
 
     logging.basicConfig(
         filename=log_file,
@@ -38,16 +38,33 @@ def configurar_logging():
 
 
 def archivo_existe(path: str) -> bool:
-    # Verifica si existe el archivo
-    pass
+    return os.path.isfile(path)
+
 
 def crear_archivo_vacio(path: str):
-    # Crea un archivo de texto vacío para que el usuario lo complete
-    pass
+    try:
+        with open(path, 'w', encoding='utf-8') as f:
+            f.write("# Agregá acá los paths absolutos a los videos que querés procesar\n")
+        logging.info(f"Archivo vacío creado: {path}")
+    except Exception as e:
+        logging.error(f"No se pudo crear el archivo {path}: {e}")
+
 
 def leer_rutas_desde_archivo(path: str) -> list[str]:
-    # Lee líneas del archivo de texto, las limpia y devuelve como lista
-    pass
+    rutas = []
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            for linea in f:
+                linea = linea.strip()
+                if not linea or linea.startswith('#'):
+                    continue
+                rutas.append(linea)
+        logging.info(f"Se leyeron {len(rutas)} rutas desde el archivo.")
+        return rutas
+    except Exception as e:
+        logging.error(f"No se pudo leer el archivo {path}: {e}")
+        return []
+
 
 def validar_rutas(rutas: list[str]) -> bool:
     # Valida que las rutas tengan formato correcto y existan en el sistema
