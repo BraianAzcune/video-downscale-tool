@@ -22,7 +22,7 @@ def procesar_archivos(rutas: list[str]):
 @dataclass
 class VideoInfo:
     fps: float | None = None
-    audio_bitrate: int | None = None
+    audio_bitrate: int  = 0
     video_bitrate: int | None = None
     width: int | None = None
     height: int | None = None
@@ -50,21 +50,23 @@ def obtener_info_video(ruta: str) -> VideoInfo:
         # Bitrate promedio total del archivo
         info.video_bitrate = int(data["format"]["bit_rate"])
 
-        streams = data["streams"]
-        video_stream = next(s for s in streams if s["codec_type"] == "video")
-        audio_stream = next(s for s in streams if s["codec_type"] == "audio")
+        streams = data.get("streams", [])
+        video_stream = next((s for s in streams if s.get("codec_type") == "video"), None)
+        audio_stream = next((s for s in streams if s.get("codec_type") == "audio"), None)
 
         # FPS
-        r_frame_rate = video_stream["r_frame_rate"]
-        num, denom = map(int, r_frame_rate.split("/"))
-        info.fps = num / denom if denom != 0 else None
+        if video_stream:
+            r_frame_rate = video_stream["r_frame_rate"]
+            num, denom = map(int, r_frame_rate.split("/"))
+            info.fps = num / denom if denom != 0 else None
 
-        # Resolución
-        info.width = video_stream["width"]
-        info.height = video_stream["height"]
+            # Resolución
+            info.width = video_stream["width"]
+            info.height = video_stream["height"]
 
-        # Bitrate de audio
-        info.audio_bitrate = int(audio_stream["bit_rate"]) if "bit_rate" in audio_stream else 0
+        if audio_stream:
+            # Bitrate de audio
+            info.audio_bitrate = int(audio_stream["bit_rate"]) if "bit_rate" in audio_stream else 0
 
 
     except Exception as e:
