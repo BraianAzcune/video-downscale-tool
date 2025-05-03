@@ -21,6 +21,7 @@ def procesar_archivos(rutas: list[str]):
 
 @dataclass
 class VideoInfo:
+    duration: float | None    = None
     fps: float | None = None
     audio_bitrate: int  = 0
     video_bitrate: int | None = None
@@ -31,14 +32,17 @@ def obtener_info_video(ruta: str) -> VideoInfo:
     info = VideoInfo()
 
     try:
+        # Pedimos también duration junto a bit_rate
+        cmd = [
+            "ffprobe",
+            "-v", "error",
+            "-show_entries", "format=duration,bit_rate",
+            "-show_entries", "stream=index,codec_type,r_frame_rate,bit_rate,width,height",
+            "-of", "json",
+            ruta
+        ]
         resultado = subprocess.run(
-            [
-                "ffprobe", "-v", "error",
-                "-show_entries", "format=bit_rate", 
-                "-show_entries", "stream=index,codec_type,r_frame_rate,bit_rate,width,height",
-                "-of", "json",
-                ruta
-            ],
+            cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
@@ -46,28 +50,29 @@ def obtener_info_video(ruta: str) -> VideoInfo:
         )
 
         data = json.loads(resultado.stdout)
-        
+
+        # Duración en segundos
+        if "duration" in data["format"]:
+            info.duration = float(data["format"]["duration"])
+
         # Bitrate promedio total del archivo
-        info.video_bitrate = int(data["format"]["bit_rate"])
+        if "bit_rate" in data["format"]:
+            info.video_bitrate = int(data["format"]["bit_rate"])
 
         streams = data.get("streams", [])
         video_stream = next((s for s in streams if s.get("codec_type") == "video"), None)
         audio_stream = next((s for s in streams if s.get("codec_type") == "audio"), None)
 
-        # FPS
         if video_stream:
-            r_frame_rate = video_stream["r_frame_rate"]
-            num, denom = map(int, r_frame_rate.split("/"))
-            info.fps = num / denom if denom != 0 else None
-
+            # FPS
+            num, denom = map(int, video_stream["r_frame_rate"].split("/"))
+            info.fps = num / denom if denom else None
             # Resolución
-            info.width = video_stream["width"]
-            info.height = video_stream["height"]
+            info.width  = video_stream.get("width")
+            info.height = video_stream.get("height")
 
-        if audio_stream:
-            # Bitrate de audio
-            info.audio_bitrate = int(audio_stream["bit_rate"]) if "bit_rate" in audio_stream else 0
-
+        if audio_stream and "bit_rate" in audio_stream:
+            info.audio_bitrate = int(audio_stream["bit_rate"])
 
     except Exception as e:
         logging.error(f"Error al obtener información del video '{ruta}': {e}")
@@ -187,19 +192,24 @@ def ejecutar_ffmpeg(comando: list[str]):
     try:
         logging.info(f"Ejecutando FFmpeg: {' '.join(comando)}")
         
-        resultado = subprocess.run(
+        proceso = subprocess.Popen(
             comando,
-            stdout=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,      # descartamos stdout
             stderr=subprocess.PIPE,
             text=True,
-            encoding="utf-8"
+            encoding="utf-8",
         )
 
-        if resultado.returncode == 0:
+        for linea in proceso.stderr:
+            linea = linea.strip()
+            # Simplemente la imprimimos; puedes filtrar o parsear si quieres
+            print(linea)
+
+        codigo = proceso.wait()
+        if codigo == 0:
             logging.info("Conversión completada con éxito.")
         else:
-            logging.error(f"Error en la conversión. Código: {resultado.returncode}")
-            logging.error(resultado.stderr.strip())
+            logging.error(f"Error en la conversión. Código: {codigo}")
     
     except Exception as e:
         logging.error(f"Error al ejecutar FFmpeg: {e}")
