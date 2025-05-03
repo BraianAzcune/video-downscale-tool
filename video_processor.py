@@ -1,6 +1,7 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import json
 import os
+import re
 import subprocess
 import logging
 import uuid
@@ -15,21 +16,43 @@ def procesar_archivos(rutas: list[str]):
         
         comando = generar_comando_ffmpeg(ruta, info)
         if comando:
-            ejecutar_ffmpeg(comando)
+            ejecutar_ffmpeg(info, comando)
         else:
             logging.warning(f"Comando no generado para: {ruta}")
 
 @dataclass
 class VideoInfo:
+    path: str
+    nombre: str = field(init=False)
+    path_salida: str = field(init=False)
     duration: float | None    = None
     fps: float | None = None
     audio_bitrate: int  = 0
     video_bitrate: int | None = None
     width: int | None = None
     height: int | None = None
+    _last_printed_pct: int    = -1  # para seguimiento interno
+
+    def __post_init__(self):
+        # Nombre del archivo original
+        self.nombre = os.path.basename(self.path)
+        # Carpeta y componentes del nombre
+        carpeta = os.path.dirname(self.path)
+        base, ext = os.path.splitext(self.nombre)
+        # Nombre y ruta de salida
+        salida_nombre = f"{base}_converted{ext}"
+        salida_ruta = os.path.join(carpeta, salida_nombre)
+        # Si ya existe, agregar GUID
+        if os.path.exists(salida_ruta):
+            guid = uuid.uuid4().hex[:8]
+            salida_nombre = f"{base}_converted_{guid}{ext}"
+            salida_ruta = os.path.join(carpeta, salida_nombre)
+            logging.warning(f"Archivo de salida ya existe. Usando nombre alternativo: {salida_nombre}")
+        self.path_salida = salida_ruta
+
 
 def obtener_info_video(ruta: str) -> VideoInfo:
-    info = VideoInfo()
+    info = VideoInfo(path=ruta)
 
     try:
         # Pedimos también duration junto a bit_rate
@@ -98,18 +121,6 @@ def generar_comando_ffmpeg(path: str, info: VideoInfo) -> list[str] | None:
         list[str] | None: Lista de argumentos para ffmpeg o None si ocurre algún error.
     """
     try:
-        carpeta, nombre = os.path.split(path)
-        nombre_base, extension = os.path.splitext(nombre)
-        nombre_salida = f"{nombre_base}_converted{extension}"
-        path_salida = os.path.join(carpeta, nombre_salida)
-
-        # Si el archivo de salida ya existe, agregar GUID
-        if os.path.exists(path_salida):
-            guid = uuid.uuid4().hex[:8]
-            nombre_salida = f"{nombre_base}_converted_{guid}{extension}"
-            path_salida = os.path.join(carpeta, nombre_salida)
-            logging.warning(f"Archivo de salida ya existe. Usando nombre alternativo: {nombre_salida}")
-
         # Armado del filtro de video
         filtros = ["hwupload_cuda", "scale_cuda=w=-2:h=480"]
         if info.fps and info.fps > 40:
@@ -137,7 +148,7 @@ def generar_comando_ffmpeg(path: str, info: VideoInfo) -> list[str] | None:
             "-cq", "23",
             *vbr_args,
             *audio_args,
-            path_salida
+            info.path_salida
         ]
 
     except Exception as e:
@@ -188,7 +199,7 @@ def calcular_limites_de_bitrate(info: VideoInfo) -> tuple[int, int]:
 
 
 
-def ejecutar_ffmpeg(comando: list[str]):
+def ejecutar_ffmpeg(info: VideoInfo, comando: list[str]):
     try:
         logging.info(f"Ejecutando FFmpeg: {' '.join(comando)}")
         
@@ -201,9 +212,7 @@ def ejecutar_ffmpeg(comando: list[str]):
         )
 
         for linea in proceso.stderr:
-            linea = linea.strip()
-            # Simplemente la imprimimos; puedes filtrar o parsear si quieres
-            print(linea)
+            print_progreso(linea.strip(), info)
 
         codigo = proceso.wait()
         if codigo == 0:
@@ -213,3 +222,25 @@ def ejecutar_ffmpeg(comando: list[str]):
     
     except Exception as e:
         logging.error(f"Error al ejecutar FFmpeg: {e}")
+
+
+_time_pat = re.compile(r"time=(\d+):(\d+):([\d\.]+)")
+def print_progreso(linea: str, info: VideoInfo):
+    """
+    Parsea una línea de stderr de FFmpeg, calcula porcentaje según info.duration
+    y lo imprime si ha avanzado al menos 1% desde la última vez.
+    """
+    if info.duration is None:
+        return
+
+    m = _time_pat.search(linea)
+    if not m:
+        return
+
+    horas, mins, segs = m.groups()
+    elapsed = int(horas) * 3600 + int(mins) * 60 + float(segs)
+    pct = int((elapsed / info.duration) * 100)
+
+    if pct > info._last_printed_pct:
+        print(f"{info.nombre} {pct}%")
+        info._last_printed_pct = pct
