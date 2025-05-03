@@ -31,3 +31,8 @@ Evitar videos excesivamente pesados o sobrecodificados al:
 python procesar_videos.py
 ```
 
+## 🛠️ En desarrollo
+
+Actualmente se está trabajando en una pequeña interfaz de consola
+
+![Vista previa de la GUI](previewGui.png)
