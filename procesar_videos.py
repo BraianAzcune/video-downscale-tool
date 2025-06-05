@@ -65,6 +65,7 @@ def leer_rutas_desde_archivo(path: str) -> list[str]:
                 linea = linea.strip()
                 if not linea or linea.startswith('#'):
                     continue
+                linea = remover_comillas_dobles_extremos(linea)
                 rutas.append(linea)
         logging.info(f"Se leyeron {len(rutas)} rutas desde el archivo.")
         return rutas
@@ -72,6 +73,11 @@ def leer_rutas_desde_archivo(path: str) -> list[str]:
         logging.error(f"No se pudo leer el archivo {path}: {e}")
         return []
 
+
+def remover_comillas_dobles_extremos(texto: str) -> str:
+    if texto.startswith('"') and texto.endswith('"'):
+        return texto[1:-1]
+    return texto
 
 def filter_valid_paths(rutas: list[str]) -> list[str]:
     rutas_validas: list[str] = []
