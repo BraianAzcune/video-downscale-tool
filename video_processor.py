@@ -50,6 +50,12 @@ class VideoInfo:
             logging.warning(f"Archivo de salida ya existe. Usando nombre alternativo: {salida_nombre}")
         self.path_salida = salida_ruta
 
+    def should_print(self, pct: int) -> bool:
+        return pct > self._last_printed_pct
+
+    def update_printed_pct(self, pct: int):
+        self._last_printed_pct = pct
+
 
 def obtener_info_video(ruta: str) -> VideoInfo:
     info = VideoInfo(path=ruta)
@@ -210,6 +216,9 @@ def ejecutar_ffmpeg(info: VideoInfo, comando: list[str]):
             text=True,
             encoding="utf-8",
         )
+        if proceso.stderr is None:
+            logging.error("FFmpeg no devolvió stderr. Verifica la instalación.")
+            return
 
         for linea in proceso.stderr:
             print_progreso(linea.strip(), info)
@@ -241,6 +250,6 @@ def print_progreso(linea: str, info: VideoInfo):
     elapsed = int(horas) * 3600 + int(mins) * 60 + float(segs)
     pct = int((elapsed / info.duration) * 100)
 
-    if pct > info._last_printed_pct:
+    if info.should_print(pct):
         print(f"{info.nombre} {pct}%")
-        info._last_printed_pct = pct
+        info.update_printed_pct(pct)

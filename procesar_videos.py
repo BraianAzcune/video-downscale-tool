@@ -58,7 +58,7 @@ def crear_archivo_vacio(path: str):
 
 
 def leer_rutas_desde_archivo(path: str) -> list[str]:
-    rutas = []
+    rutas: list[str] = []
     try:
         with open(path, 'r', encoding='utf-8') as f:
             for linea in f:
@@ -74,7 +74,7 @@ def leer_rutas_desde_archivo(path: str) -> list[str]:
 
 
 def filter_valid_paths(rutas: list[str]) -> list[str]:
-    rutas_validas = []
+    rutas_validas: list[str] = []
 
     for ruta in rutas:
         if os.path.isfile(ruta):
@@ -87,7 +87,7 @@ def filter_valid_paths(rutas: list[str]) -> list[str]:
 
 def filter_supported_extensions(rutas: list[str]) -> list[str]:
     extensiones_validas = {'.wmv', '.webm', '.mp4', '.mkv'}
-    rutas_filtradas = []
+    rutas_filtradas: list[str] = []
 
     for ruta in rutas:
         ext = os.path.splitext(ruta)[1].lower()
