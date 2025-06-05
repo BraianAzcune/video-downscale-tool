@@ -17,6 +17,7 @@ def procesar_archivos(rutas: list[str]):
         comando = generar_comando_ffmpeg(ruta, info)
         if comando:
             ejecutar_ffmpeg(info, comando)
+            quedarse_con_mejor_archivo(info)
         else:
             logging.warning(f"Comando no generado para: {ruta}")
 
@@ -232,6 +233,30 @@ def ejecutar_ffmpeg(info: VideoInfo, comando: list[str]):
     except Exception as e:
         logging.error(f"Error al ejecutar FFmpeg: {e}")
 
+
+def quedarse_con_mejor_archivo(info: VideoInfo):
+    try:
+        # Verifico que exista el archivo convertido
+        if not os.path.exists(info.path_salida):
+            logging.warning(f"No se encontró el archivo convertido en: {info.path_salida}")
+            return
+
+        size_original = os.path.getsize(info.path)
+        size_convertido = os.path.getsize(info.path_salida)
+        logging.info(f"[Validación] {size_convertido} > {size_original}")
+
+        if size_convertido > size_original:
+            # Elimino el archivo convertido
+            os.remove(info.path_salida)
+
+            # Renombro el original usando exactamente la ruta de salida (info.path_salida)
+            os.rename(info.path, info.path_salida)
+            logging.info(f"Archivo original renombrado a: {info.path_salida}")
+        else:
+            os.remove(info.path)
+            logging.info(f"Archivo original eliminado: {info.path}")
+    except Exception as e:
+        logging.error(f"Error en validar_resultado para '{info.path}': {e}")
 
 _time_pat = re.compile(r"time=(\d+):(\d+):([\d\.]+)")
 def print_progreso(linea: str, info: VideoInfo):
