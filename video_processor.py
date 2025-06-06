@@ -5,6 +5,8 @@ import re
 import subprocess
 import logging
 import uuid
+from send2trash import send2trash
+
 
 def procesar_archivos(rutas: list[str]):
     for ruta in rutas:
@@ -40,13 +42,14 @@ class VideoInfo:
         # Carpeta y componentes del nombre
         carpeta = os.path.dirname(self.path)
         base, ext = os.path.splitext(self.nombre)
+        ext_salida = obtener_ext_salida(ext)
         # Nombre y ruta de salida
-        salida_nombre = f"{base}_converted{ext}"
+        salida_nombre = f"{base}_converted{ext_salida}"
         salida_ruta = os.path.join(carpeta, salida_nombre)
         # Si ya existe, agregar GUID
         if os.path.exists(salida_ruta):
             guid = uuid.uuid4().hex[:8]
-            salida_nombre = f"{base}_converted_{guid}{ext}"
+            salida_nombre = f"{base}_converted_{guid}{ext_salida}"
             salida_ruta = os.path.join(carpeta, salida_nombre)
             logging.warning(f"Archivo de salida ya existe. Usando nombre alternativo: {salida_nombre}")
         self.path_salida = salida_ruta
@@ -57,6 +60,17 @@ class VideoInfo:
     def update_printed_pct(self, pct: int):
         self._last_printed_pct = pct
 
+
+# Auxiliar que devuelve la extensión de salida:
+def obtener_ext_salida(ext_original: str) -> str:
+    """
+    Retorna la extensión a usar para el archivo convertido.
+    Si ext_original está en la lista de contenedores compatibles con H.264, se devuelve ext_original.
+    Si no, retorna '.mp4'.
+    """
+    contenedores_h264 = {".mp4", ".mkv", ".mov", ".avi", ".flv", ".ts"}
+    ext = ext_original.lower()
+    return ext if ext in contenedores_h264 else ".mp4"
 
 def obtener_info_video(ruta: str) -> VideoInfo:
     info = VideoInfo(path=ruta)
@@ -247,13 +261,13 @@ def quedarse_con_mejor_archivo(info: VideoInfo):
 
         if size_convertido > size_original:
             # Elimino el archivo convertido
-            os.remove(info.path_salida)
+            send2trash(info.path_salida)
 
             # Renombro el original usando exactamente la ruta de salida (info.path_salida)
             os.rename(info.path, info.path_salida)
             logging.info(f"Archivo original renombrado a: {info.path_salida}")
         else:
-            os.remove(info.path)
+            send2trash(info.path)
             logging.info(f"Archivo original eliminado: {info.path}")
     except Exception as e:
         logging.error(f"Error en validar_resultado para '{info.path}': {e}")
