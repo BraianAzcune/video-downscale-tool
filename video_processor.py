@@ -7,6 +7,8 @@ import logging
 import uuid
 from send2trash import send2trash
 
+AGREGAR_SUFIJO_CONVERTED = False  # Cambiar a False para mantener el nombre original
+
 
 def procesar_archivos(rutas: list[str]):
     for ruta in rutas:
@@ -28,6 +30,7 @@ class VideoInfo:
     path: str
     nombre: str = field(init=False)
     path_salida: str = field(init=False)
+    path_final: str = field(init=False)
     duration: float | None    = None
     fps: float | None = None
     audio_bitrate: int  = 0
@@ -39,20 +42,25 @@ class VideoInfo:
     def __post_init__(self):
         # Nombre del archivo original
         self.nombre = os.path.basename(self.path)
-        # Carpeta y componentes del nombre
         carpeta = os.path.dirname(self.path)
         base, ext = os.path.splitext(self.nombre)
         ext_salida = obtener_ext_salida(ext)
-        # Nombre y ruta de salida
-        salida_nombre = f"{base}_converted{ext_salida}"
+
+        base_converted = f"{base}_converted"
+        salida_nombre = f"{base_converted}{ext_salida}"
         salida_ruta = os.path.join(carpeta, salida_nombre)
-        # Si ya existe, agregar GUID
+
         if os.path.exists(salida_ruta):
             guid = uuid.uuid4().hex[:8]
-            salida_nombre = f"{base}_converted_{guid}{ext_salida}"
+            salida_nombre = f"{base_converted}_{guid}{ext_salida}"
             salida_ruta = os.path.join(carpeta, salida_nombre)
             logging.warning(f"Archivo de salida ya existe. Usando nombre alternativo: {salida_nombre}")
+
         self.path_salida = salida_ruta
+        if AGREGAR_SUFIJO_CONVERTED:
+            self.path_final = self.path_salida
+        else:
+            self.path_final = os.path.join(carpeta, f"{base}{ext_salida}")
 
     def should_print(self, pct: int) -> bool:
         return pct > self._last_printed_pct
@@ -259,16 +267,29 @@ def quedarse_con_mejor_archivo(info: VideoInfo):
         size_convertido = os.path.getsize(info.path_salida)
         logging.info(f"[Validación] {size_convertido} > {size_original}")
 
-        if size_convertido > size_original:
-            # Elimino el archivo convertido
-            send2trash(info.path_salida)
+        final_path = getattr(info, "path_final", info.path_salida)
 
-            # Renombro el original usando exactamente la ruta de salida (info.path_salida)
-            os.rename(info.path, info.path_salida)
-            logging.info(f"Archivo original renombrado a: {info.path_salida}")
+        if size_convertido > size_original:
+            send2trash(info.path_salida)
+            if os.path.abspath(final_path) != os.path.abspath(info.path):
+                if os.path.exists(final_path):
+                    send2trash(final_path)
+                os.rename(info.path, final_path)
+                logging.info(f"Archivo original renombrado a: {final_path}")
+            else:
+                logging.info(f"Archivo original conservado: {info.path}")
+            return
+
+        send2trash(info.path)
+        logging.info(f"Archivo original eliminado: {info.path}")
+
+        if os.path.abspath(info.path_salida) != os.path.abspath(final_path):
+            if os.path.exists(final_path):
+                send2trash(final_path)
+            os.rename(info.path_salida, final_path)
+            logging.info(f"Archivo convertido renombrado a: {final_path}")
         else:
-            send2trash(info.path)
-            logging.info(f"Archivo original eliminado: {info.path}")
+            logging.info(f"Archivo convertido disponible en: {final_path}")
     except Exception as e:
         logging.error(f"Error en validar_resultado para '{info.path}': {e}")
 
