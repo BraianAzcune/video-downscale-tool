@@ -152,8 +152,9 @@ def generar_comando_ffmpeg(path: str, info: VideoInfo) -> list[str] | None:
     try:
         # Armado del filtro de video
         filtros = ["hwupload_cuda", "scale_cuda=w=-2:h=480"]
-        if info.fps and info.fps > 40:
-            filtros.append("fps=30")
+        # TODO, habria que hacer esto una configuracion opcional
+        # if info.fps and info.fps > 40:
+        #     filtros.append("fps=30")
         filtro_vf = ",".join(filtros)
 
         if info.audio_bitrate > 192000:
