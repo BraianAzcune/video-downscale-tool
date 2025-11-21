@@ -1,0 +1,49 @@
+# raiz_media
+D:\OBS-RECORDS
+
+# output_excel
+C:\Users\braia\Downloads\metricas_videos.xlsx
+
+# patrones_video
+.mp4
+.m4v
+.mov
+.wmv
+.avi
+.flv
+.mkv
+.webm
+.ogv
+.3gp
+.3g2
+.mpeg
+.mpg
+.mpe
+.vob
+.mxf
+.amv
+.f4v
+.mts
+.divx
+.xvid
+.rm
+.rmvb
+.asf
+.dv
+.mpv
+.m2v
+.m1v
+.yuv
+.h264
+.h265
+.av1
+.hevc
+
+# ruta_exclusiones
+"D:\OBS-RECORDS\2025-02-12 01-09-28- minecraft.mkv"
+"D:\OBS-RECORDS\2025-10-04 15-16-57.mkv"
+"D:\OBS-RECORDS\presa facil.mp4"
+
+
+# ruta_debug
+"D:\songs"
