@@ -12,9 +12,7 @@ from logger_config import configurar_logging
 
 def main():
     configurar_logging()
-    base_dir = Path(__file__).resolve().parent.parent
-    ruta_config = base_dir / "app" / "config" / "settings.txt"
-    settings = Settings.cargar_desde_txt(ruta_config)
+    settings = Settings.cargar_por_defecto()
     ejecutar_pipeline(settings)
 
 if __name__ == "__main__":

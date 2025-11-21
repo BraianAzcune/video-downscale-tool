@@ -1,44 +1,57 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Iterable
+from typing import Iterable, Any
 import sys
 import subprocess
 import os
+import threading
+
+# Habilitar importaciones del subproyecto metricas-videos
+_BASE_DIR = Path(__file__).resolve().parent
+_METRICAS_DIR = _BASE_DIR / "metricas-videos"
+if str(_METRICAS_DIR) not in sys.path:
+    sys.path.insert(0, str(_METRICAS_DIR))
+
+from app.pipeline.get_metricas import get_metricas  # type: ignore
 
 try:
-    from PySide6.QtCore import Qt, QTimer
+    from PySide6.QtCore import Qt, QTimer, Signal
     from PySide6.QtGui import QDragEnterEvent, QDropEvent, QPalette, QColor
     from PySide6.QtWidgets import (
         QApplication,
         QFrame,
         QHBoxLayout,
         QLabel,
-        QListWidget,
-        QListWidgetItem,
         QMainWindow,
         QMessageBox,
         QPushButton,
+        QTableWidget,
+        QTableWidgetItem,
         QVBoxLayout,
         QWidget,
     )
+    from PySide6.QtWidgets import QHeaderView
+    SignalType = Signal
     PYSIDE = True
 except Exception:  # pragma: no cover - fallback to PyQt5 if available
-    from PyQt5.QtCore import Qt, QTimer
+    from PyQt5.QtCore import Qt, QTimer, pyqtSignal
     from PyQt5.QtGui import QDragEnterEvent, QDropEvent, QPalette, QColor
     from PyQt5.QtWidgets import (
         QApplication,
         QFrame,
         QHBoxLayout,
         QLabel,
-        QListWidget,
-        QListWidgetItem,
         QMainWindow,
         QMessageBox,
         QPushButton,
+        QTableWidget,
+        QTableWidgetItem,
         QVBoxLayout,
         QWidget,
     )
+    from PyQt5.QtWidgets import QHeaderView
+    SignalType = pyqtSignal
     PYSIDE = False
 
 
@@ -121,6 +134,8 @@ class DropArea(QFrame):
 
 
 class MainWindow(QMainWindow):
+    kbps_ready = SignalType(list, list, object)  # resultados, rutas_pendientes, exc
+
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("zCarga - Arrastrar y Guardar")
@@ -136,11 +151,18 @@ class MainWindow(QMainWindow):
         self.drop_area = DropArea(self._on_dropped, self)
         root.addWidget(self.drop_area, stretch=2)
 
-        # Lista de archivos
-        self.list_widget = QListWidget(self)
-        self.list_widget.setSelectionMode(QListWidget.ExtendedSelection)
-        self.list_widget.setAlternatingRowColors(True)
-        root.addWidget(self.list_widget, stretch=3)
+        # Tabla de archivos
+        self.table = QTableWidget(0, 2, self)
+        self.table.setSelectionMode(QTableWidget.ExtendedSelection)
+        self.table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.table.setAlternatingRowColors(True)
+        self.table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.table.setHorizontalHeaderLabels(["Ruta", "Kbps total"])
+        self.table.verticalHeader().setVisible(False)
+        header = self.table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.Stretch)
+        header.setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        root.addWidget(self.table, stretch=3)
 
         # Barra inferior con contador y acciones
         bottom = QHBoxLayout()
@@ -170,46 +192,67 @@ class MainWindow(QMainWindow):
         # Conjunto interno para evitar duplicados
         self._known: set[str] = set()
         self._spawn_guard: bool = False
+        self._pending_paths: set[str] = set()
+        self._kbps_worker_running: bool = False
+        self._spinner_frames = ["|", "/", "-", "\\"]
+        self._spinner_index = 0
+        self._spinner_timer: QTimer | None = None
+        self.kbps_ready.connect(self._on_kbps_ready)  # type: ignore[arg-type]
 
     # Lógica
     def _on_dropped(self, paths: Iterable[str]) -> None:
         added = 0
+        nuevos: list[str] = []
         for p in paths:
             norm = str(Path(p).resolve())
             if norm in self._known:
                 continue
             self._known.add(norm)
-            item = QListWidgetItem(norm)
-            self.list_widget.addItem(item)
+            row = self.table.rowCount()
+            self.table.insertRow(row)
+            path_item = QTableWidgetItem(norm)
+            kbps_item = QTableWidgetItem("-")
+            kbps_item.setTextAlignment(Qt.AlignCenter)
+            path_item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled)
+            kbps_item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled)
+            self.table.setItem(row, 0, path_item)
+            self.table.setItem(row, 1, kbps_item)
             added += 1
+            nuevos.append(norm)
         if added:
             self._update_counter()
             self._update_actions_enabled()
+            self._mark_pending(nuevos)
+            self._start_kbps_worker()
 
     def _update_counter(self) -> None:
-        count = self.list_widget.count()
+        count = self.table.rowCount()
         self.count_label.setText(f"Total: {count}")
 
     def _update_actions_enabled(self) -> None:
-        has_items = self.list_widget.count() > 0
+        has_items = self.table.rowCount() > 0
         self.clear_btn.setEnabled(has_items)
         self.save_btn.setEnabled(has_items)
 
     def clear_list(self) -> None:
-        self.list_widget.clear()
+        self.table.setRowCount(0)
         self._known.clear()
+        self._pending_paths.clear()
         self._update_counter()
         self._update_actions_enabled()
+        self._clear_kbps()
 
     def save_list(self) -> None:
-        if self.list_widget.count() == 0:
+        if self.table.rowCount() == 0:
             return
         base_dir = Path(__file__).resolve().parent
         out_file = base_dir / "archivos_a_transformar.txt"
         try:
             with out_file.open("w", encoding="utf-8") as f:
-                for i in range(self.list_widget.count()):
-                    f.write(self.list_widget.item(i).text() + "\n")
+                for i in range(self.table.rowCount()):
+                    item = self.table.item(i, 0)
+                    if item:
+                        f.write(item.text() + "\n")
         except OSError as exc:
             QMessageBox.critical(self, "Error", f"No se pudo guardar el archivo:\n{exc}")
             return
@@ -235,6 +278,106 @@ class MainWindow(QMainWindow):
             # Solo mostramos error si falla el arranque del proceso
             QMessageBox.critical(self, "Error", f"No se pudo iniciar el proceso:\n{exc}")
 
+    def _start_spinner(self) -> None:
+        if self._spinner_timer is None:
+            self._spinner_timer = QTimer(self)
+            self._spinner_timer.timeout.connect(self._tick_spinner)  # type: ignore[arg-type]
+        if not self._spinner_timer.isActive():
+            self._spinner_timer.start(120)
+
+    def _stop_spinner_if_idle(self) -> None:
+        if self._spinner_timer and not self._pending_paths:
+            self._spinner_timer.stop()
+
+    def _tick_spinner(self) -> None:
+        if not self._pending_paths:
+            self._stop_spinner_if_idle()
+            return
+        self._spinner_index = (self._spinner_index + 1) % len(self._spinner_frames)
+        frame = self._spinner_frames[self._spinner_index]
+        for i in range(self.table.rowCount()):
+            ruta_item = self.table.item(i, 0)
+            kbps_item = self.table.item(i, 1)
+            if not ruta_item or not kbps_item:
+                continue
+            if ruta_item.text() in self._pending_paths:
+                kbps_item.setText(frame)
+
+    def _mark_pending(self, paths: Iterable[str]) -> None:
+        for ruta in paths:
+            norm = str(Path(ruta).resolve())
+            self._pending_paths.add(norm)
+            # Mostrar frame inicial del spinner en la fila correspondiente
+            for i in range(self.table.rowCount()):
+                ruta_item = self.table.item(i, 0)
+                kbps_item = self.table.item(i, 1)
+                if ruta_item and kbps_item and ruta_item.text() == norm:
+                    kbps_item.setText(self._spinner_frames[self._spinner_index])
+        self._start_spinner()
+
+    def _start_kbps_worker(self) -> None:
+        if self._kbps_worker_running or not self._pending_paths:
+            return
+
+        rutas_pendientes = list(self._pending_paths)
+        self._kbps_worker_running = True
+
+        def worker() -> None:
+            exc: Exception | None = None
+            resultados: list[tuple[str, "VideoAnaliticaDTO"]] = []
+            try:
+                resultados = get_metricas(rutas_pendientes)
+            except Exception as e:  # pragma: no cover - UI feedback
+                exc = e
+
+            # Pasar el resultado al hilo de UI
+            self.kbps_ready.emit(resultados, rutas_pendientes, exc)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _set_kbps_value(self, ruta: str, valor: int | None) -> None:
+        objetivo = ruta
+        for i in range(self.table.rowCount()):
+            ruta_item = self.table.item(i, 0)
+            kbps_item = self.table.item(i, 1)
+            if ruta_item and kbps_item and ruta_item.text() == objetivo:
+                kbps_item.setText(str(valor) if valor is not None else "-")
+
+    def _on_kbps_ready(
+        self,
+        resultados: list[tuple[str, Any]],
+        rutas_pendientes: list[str],
+        exc: Exception | None,
+    ) -> None:
+        self._kbps_worker_running = False
+        if exc:
+            QMessageBox.warning(self, "Error al calcular metricas", str(exc))
+            for ruta in rutas_pendientes:
+                self._set_kbps_value(ruta, None)
+            self._pending_paths.difference_update(rutas_pendientes)
+            self._stop_spinner_if_idle()
+            self._start_kbps_worker()
+            return
+
+        kbps_por_ruta = {
+            ruta: video.kbps_total for ruta, video in resultados
+        }
+        for ruta in rutas_pendientes:
+            valor = kbps_por_ruta.get(ruta)
+            self._set_kbps_value(ruta, valor)
+        self._pending_paths.difference_update(rutas_pendientes)
+        self._stop_spinner_if_idle()
+        self._start_kbps_worker()
+
+    def _clear_kbps(self) -> None:
+        """Resetear la columna Kbps a vacio."""
+
+        for i in range(self.table.rowCount()):
+            kbps_item = self.table.item(i, 1)
+            if kbps_item:
+                kbps_item.setText("-")
+        self._stop_spinner_if_idle()
+
 
 def main() -> int:
     import sys
@@ -259,7 +402,17 @@ def main() -> int:
         a.setStyleSheet(
             """
             QWidget { background-color: #000000; color: #ffffff; }
-            QListWidget { background: #111111; alternate-background-color: #151515; }
+            QListWidget, QTableWidget {
+                background: #111111;
+                alternate-background-color: #151515;
+                gridline-color: #333333;
+            }
+            QHeaderView::section {
+                background-color: #0f0f0f;
+                color: #ffffff;
+                border: 1px solid #333333;
+                padding: 4px 6px;
+            }
             QPushButton {
                 background: #111111; color: #ffffff; border: 1px solid #333333;
                 padding: 6px 12px; border-radius: 4px;

@@ -166,3 +166,15 @@ class Settings:
         """Devolver la instancia lista para el pipeline (placeholder para validaciones)."""
 
         return self
+
+    @classmethod
+    def ruta_config_por_defecto(cls) -> Path:
+        """Ruta del archivo settings.txt que acompaña a este módulo."""
+
+        return Path(__file__).resolve().with_name("settings.txt")
+
+    @classmethod
+    def cargar_por_defecto(cls) -> "Settings":
+        """Cargar configuración desde el settings.txt ubicado junto a este archivo."""
+
+        return cls.cargar_desde_txt(cls.ruta_config_por_defecto())

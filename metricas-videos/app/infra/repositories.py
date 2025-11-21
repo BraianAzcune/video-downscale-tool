@@ -75,3 +75,15 @@ class FilesystemRepository:
             if ruta_normalizada == exclusion or ruta_normalizada.is_relative_to(exclusion):
                 return True
         return False
+
+    def mapear_paths(self, rutas: Iterable[str]) -> list[tuple[str, Optional[Path]]]:
+        """Devolver la ruta original y, si aplica, su Path normalizado (no excluida y es archivo)."""
+
+        resultado: list[tuple[str, Optional[Path]]] = []
+        for ruta_str in rutas:
+            ruta_path = self._normalizar_path(Path(ruta_str))
+            if ruta_path.is_file() and not self._esta_excluida(ruta_path):
+                resultado.append((ruta_str, ruta_path))
+            else:
+                resultado.append((ruta_str, None))
+        return resultado
